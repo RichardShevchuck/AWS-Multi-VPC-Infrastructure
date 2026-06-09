@@ -1,0 +1,9 @@
+# Packer
+  packer/golden-ami.pkrvars.hcl   # может содержать секреты
+
+  # Terraform
+  terraform/.terraform/
+  terraform/.terraform.lock.hcl
+  terraform/terraform.tfstate
+  terraform/terraform.tfstate.backup
+  terraform/*.tfvars 
