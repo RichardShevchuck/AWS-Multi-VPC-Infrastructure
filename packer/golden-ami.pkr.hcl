@@ -16,12 +16,13 @@ data "amazon-ami" "source_ami" {
 
   region = var.aws_region
   filters = {
-    name                = "ubuntu-pro-minimal/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-pro-minimal-*"
-    virtualization_type = "hvm"
+    name                = "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
+    virtualization-type = "hvm"
+    root-device-type    = "ebs"
   }
 
   most_recent = true
-  owners      = ["679593333241"] # Canonical
+  owners      = ["099720109477"] # Canonical's AWS account ID
 }
 
 source "amazon-ebs" "ubuntu" {
@@ -50,12 +51,10 @@ build {
       "sudo apt install apache2 -y",
       "sudo apt install git -y",
       "sudo apt install wget -y",
-      "sudo snap install amazon-ssm-agent --classic",
       "wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb",
       "sudo dpkg -i amazon-cloudwatch-agent.deb",
       "rm amazon-cloudwatch-agent.deb",
       "sudo systemctl enable amazon-cloudwatch-agent",
-      "sudo systemctl enable amazon-ssm-agent",
       "sudo systemctl enable apache2",
     ]
   }
