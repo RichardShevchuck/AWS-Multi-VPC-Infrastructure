@@ -19,4 +19,13 @@ resource "aws_launch_template" "app" {
       Environment = var.environment
     }
   }
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+      -a fetch-config \
+      -m ec2 \
+      -s \
+      -c ssm:/cloudwatch/config
+    EOF
+  )
 }

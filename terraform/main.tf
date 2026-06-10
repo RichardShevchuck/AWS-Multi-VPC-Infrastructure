@@ -82,3 +82,7 @@ module "alb" {
   public_subnet_id1     = module.vpc_private.private_public_subnet_id1
   vpc_id                = module.vpc_private.vpc_alb_id
 }
+
+module "cloudwatch" {
+  source = "./modules/cloudwatch"
+}
