@@ -37,3 +37,21 @@ module "transit_gateway" {
   vpc_private_subnet_id  = module.vpc_private.private_public_subnet_id
   private_route_table_id = module.vpc_private.private_route_table_id
 }
+
+
+module "iam" {
+  source = "./modules/iam"
+}
+
+resource "aws_key_pair" "bastion_key" {
+  key_name   = "bastion-key"
+  public_key = file("~/.ssh/id_rsa.pub")
+}
+
+module "bastion" {
+  source               = "./modules/bastion"
+  subnet_id            = module.vpc_public.bastion_subnet_id
+  security_group_id    = module.security_groups.bastion_security_group_id
+  key_pair_name        = aws_key_pair.bastion_key.key_name
+  iam_instance_profile = module.iam.instance_profile_name
+}
