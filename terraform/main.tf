@@ -55,3 +55,21 @@ module "bastion" {
   key_pair_name        = aws_key_pair.bastion_key.key_name
   iam_instance_profile = module.iam.instance_profile_name
 }
+
+module "launch_template" {
+  source                    = "./modules/launch-template"
+  security_group_id         = module.security_groups.app_sg_id
+  iam_instance_profile_name = module.iam.instance_profile_name
+  key_name                  = aws_key_pair.bastion_key.key_name
+}
+
+
+module "app_auto_scaling_group" {
+  source = "./modules/asg"
+
+  launch_template_id = module.launch_template.launch_template_id
+  subnet_ids = [
+    module.vpc_private.private_subnet_id0,
+    module.vpc_private.private_subnet_id1
+  ]
+}

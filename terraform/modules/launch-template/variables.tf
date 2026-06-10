@@ -18,12 +18,6 @@ variable "security_group_id" {
 }
 
 
-variable "subnet_id" {
-  description = "Subnet ID for the bastion host"
-  type        = string
-}
-
-
 variable "iam_instance_profile_name" {
   description = "IAM instance profile name for the launch template"
   type        = string
