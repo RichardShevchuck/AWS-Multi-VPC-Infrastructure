@@ -4,7 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-Packer-based golden AMI pipeline for AWS. Produces hardened Ubuntu 22.04 images pre-installed with Apache2, AWS SSM Agent, and CloudWatch Agent. Part of a broader VPC architecture project (Terraform infra tracked in `.gitignore` but not yet present).
+AWS VPC architecture built with Packer + Terraform. Produces a Golden AMI (Ubuntu 22.04 + Apache2 + CloudWatch Agent) and deploys a full multi-VPC infrastructure with Auto Scaling behind an Application Load Balancer.
+
+## Architecture
+
+```
+Internet
+    │
+    ├─────────────────────────────────────────┐
+    ▼                                         ▼
+Bastion VPC (192.168.0.0/16)        App VPC (172.32.0.0/16)
+├── public subnet 192.168.1.0/24    ├── public subnet 172.32.1.0/24 (ALB)
+│   └── Bastion EC2 (t3.micro)      ├── public subnet 172.32.2.0/24 (NAT GW)
+│       bastion_sg: port 22         ├── private subnet 172.32.3.0/24 (App EC2)
+│                                   └── private subnet 172.32.4.0/24 (App EC2)
+└── IGW                                 alb_sg: 80/443 | app_sg: 80+22
+         │                                        │
+         └──────── Transit Gateway ───────────────┘
+```
+
+**Traffic flow:**
+- `Internet → IGW → ALB → app_sg (port 80)`
+- `SSH → Bastion → TGW → app servers (port 22)`
+- `App EC2 → NAT GW → Internet` (outbound only)
+
+## Terraform Modules
+
+| Module | Purpose |
+|--------|---------|
+| `vpc_public` | Bastion VPC, subnet, IGW, route table |
+| `vpc_private` | App VPC, 4 subnets, IGW, NAT GW, EIP, route tables |
+| `security-groups` | bastion_sg, alb_sg, app_sg |
+| `transit-gateway` | TGW + attachments + routes between VPCs |
+| `iam` | EC2 role with SSM + CloudWatch policies |
+| `bastion` | Bastion EC2 in vpc_public |
+| `launch-template` | App EC2 template with Golden AMI + user_data |
+| `cloudwatch` | SSM Parameter `/cloudwatch/config` for CloudWatch Agent |
+| `alb` | ALB + target group + HTTP listener |
+| `asg` | Auto Scaling Group min 2 / max 4, attached to ALB |
 
 ## Packer Commands
 
@@ -12,30 +49,32 @@ Packer-based golden AMI pipeline for AWS. Produces hardened Ubuntu 22.04 images 
 # Initialize plugins (required once after clone)
 packer init packer/
 
-# Validate configuration
+# Validate
 packer validate -var-file=packer/golden-ami.pkrvars.hcl packer/
 
-# Format HCL files
-packer fmt packer/
-
-# Build AMI (requires AWS credentials in environment)
+# Build Golden AMI
 packer build -var-file=packer/golden-ami.pkrvars.hcl packer/
-
-# Build with inline variable overrides
-packer build -var="environment=prod" -var="aws_region=us-east-1" packer/
 ```
 
-## Architecture
+## Terraform Commands
 
-**Build flow:** `variables.pkr.hcl` declares inputs → `golden-ami.pkr.hcl` pulls the latest Canonical Ubuntu 22.04 AMI (owner `099720109477`), launches a `t3.micro` builder, runs shell provisioner, snapshots the result.
+```bash
+cd terraform/
 
-**AMI naming:** `{ami_name}-{environment}-{YYYYMMDD-HHmmss}` — timestamp injected via `locals` block, preventing name collisions across builds.
+# Initialize
+terraform init
 
-**Variable overrides:** Supply `packer/golden-ami.pkrvars.hcl` (gitignored) for environment-specific values. Defaults in `variables.pkr.hcl` target `us-east-2` / `dev`.
+# Plan
+terraform plan
+
+# Apply
+terraform apply
+
+# Destroy (run when not working to avoid costs)
+terraform destroy
+```
 
 ## AWS Credentials
-
-Packer uses the standard AWS credential chain (env vars, `~/.aws/credentials`, instance role). Set before building:
 
 ```bash
 export AWS_ACCESS_KEY_ID=...
@@ -43,6 +82,12 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_DEFAULT_REGION=us-east-2
 ```
 
-## Gitignore Notes
+## Cost Warning
 
-`packer/golden-ami.pkrvars.hcl` is gitignored (may contain secrets). `terraform/` paths are pre-ignored for planned Terraform work.
+NAT Gateway costs ~$0.05/hour (~$1.20/day). Run `terraform destroy` when not in use.
+
+## Sensitive Files (gitignored)
+
+- `packer/golden-ami.pkrvars.hcl` — Packer variables with secrets
+- `terraform/.terraform/` — local provider cache
+- `terraform/terraform.tfstate` — infrastructure state (contains sensitive data)
