@@ -18,3 +18,32 @@ resource "aws_subnet" "public" {
     Environment = var.environment
   }
 }
+
+resource "aws_internet_gateway" "bastion_igw" {
+  vpc_id = aws_vpc.bastion.id
+  tags = {
+    Name        = "${var.vpc_bastion_name}-igw"
+    Environment = var.environment
+  }
+}
+
+
+resource "aws_route_table" "bastion_public_rt" {
+  vpc_id = aws_vpc.bastion.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.bastion_igw.id
+  }
+  tags = {
+    Name        = "${var.vpc_bastion_name}-public-rt"
+    Environment = var.environment
+  }
+}
+
+resource "aws_route_table_association" "public_subnet_assoc" {
+  count          = length(var.public_subnet_cidrs)
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.bastion_public_rt.id
+}
+
+
