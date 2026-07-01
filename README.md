@@ -1,98 +1,87 @@
-# DevOps Project 02 — AWS VPC Architecture
+# AWS Multi-VPC Infrastructure
 
-Production-like AWS infrastructure built with Packer and Terraform. Features a multi-VPC network architecture with a Golden AMI pipeline, Auto Scaling, Application Load Balancer, and CloudWatch observability.
+Production-grade dual-VPC AWS architecture with a Golden AMI build pipeline. App servers live in private subnets, reachable only through a Bastion host via Transit Gateway. Built with Packer + Terraform.
 
 ## Architecture
 
 ```
 Internet
-    │
-    ├─────────────────────────────────────────────┐
-    ▼                                             ▼
-┌─────────────────────────┐     ┌──────────────────────────────────────┐
-│   Bastion VPC           │     │   App VPC (172.32.0.0/16)            │
-│   192.168.0.0/16        │     │                                      │
-│                         │     │  ┌──────────────┬──────────────┐     │
-│   IGW                   │     │  │172.32.1.0/24 │172.32.2.0/24 │     │
-│    │                    │     │  │    ALB       │  NAT GW+EIP  │◄─IGW│
-│    ▼                    │     │  └──────┬───────┴──────────────┘     │
-│  ┌──────────────────┐   │     │         │                            │
-│  │ 192.168.1.0/24   │   │     │  ┌──────────────┬──────────────┐     │
-│  │  Bastion EC2     │   │     │  │172.32.3.0/24 │172.32.4.0/24 │     │
-│  │  bastion_sg      │   │     │  │  App EC2     │  App EC2     │     │
-│  └────────┬─────────┘   │     │  │  (ASG)       │  (ASG)       │     │
-└───────────┼─────────────┘     │  └──────────────┴──────────────┘     │
-            │                   └──────────────────┬────────────────────┘
-            └──────────┐                  ┌────────┘
-                       ▼                  ▼
-                ┌──────────────────────────┐
-                │     Transit Gateway      │
-                └──────────────────────────┘
+  │
+  ├──▶ Bastion VPC (192.168.0.0/16)
+  │       │
+  │    Bastion EC2 (public subnet)
+  │       │
+  │    Transit Gateway ◀──────────────────────┐
+  │                                           │
+  └──▶ App VPC (172.32.0.0/16)               │
+          │                                   │
+       ALB (public subnet)                    │
+          │                                   │
+       ASG → EC2 ×2-4 (private subnets) ─────┘
+          (Golden AMI: Apache2 + CW Agent + SSM)
 ```
 
-## Stack
+## Tech Stack
 
-| Tool | Purpose |
-|------|---------|
-| Packer | Golden AMI build pipeline |
-| Terraform | Infrastructure as Code |
-| AWS EC2 | Bastion host + App servers |
-| AWS ALB | Application Load Balancer |
-| AWS ASG | Auto Scaling Group (min 2 / max 4) |
-| AWS SSM | Remote access + Parameter Store |
-| CloudWatch | Metrics + log aggregation |
-| Transit Gateway | Cross-VPC connectivity |
+- **AMI Pipeline:** Packer (Ubuntu 22.04 → Golden AMI)
+- **IaC:** Terraform (9 modules)
+- **Networking:** Transit Gateway, VPC Peering routes, NAT Gateway
+- **Compute:** EC2 Auto Scaling Group (min 2 / max 4), Launch Template
+- **Load Balancing:** Application Load Balancer
+- **Observability:** CloudWatch Agent, SSM Parameter Store config
+- **Access:** SSM Session Manager (no open SSH port needed)
 
 ## Terraform Modules
 
 ```
 terraform/modules/
-├── vpc_public/        # Bastion VPC, subnet, IGW, route table
-├── vpc_private/       # App VPC, 4 subnets, IGW, NAT GW, route tables
-├── security-groups/   # bastion_sg, alb_sg, app_sg
-├── transit-gateway/   # TGW + attachments + routes
-├── iam/               # EC2 role: SSM + CloudWatch policies
-├── bastion/           # Bastion EC2
-├── launch-template/   # App EC2 template with Golden AMI + user_data
-├── cloudwatch/        # SSM Parameter Store config for CloudWatch Agent
-├── alb/               # ALB + target group + HTTP listener
-└── asg/               # Auto Scaling Group, attached to ALB
+├── vpc_public/         # Bastion VPC — IGW, public subnet, route table
+├── vpc_private/        # App VPC — 4 subnets (2 public, 2 private), NAT GW
+├── security-groups/    # bastion_sg, alb_sg, app_sg
+├── transit-gateway/    # TGW + attachments + cross-VPC routes
+├── iam/                # EC2 instance role (SSM + CloudWatch policies)
+├── bastion/            # Bastion EC2 instance
+├── launch-template/    # App LT using Golden AMI
+├── cloudwatch/         # CW Agent config pushed via SSM Parameter Store
+└── asg/                # Auto Scaling Group attached to ALB
 ```
 
-## Golden AMI
-
-Ubuntu 22.04 LTS pre-installed with:
-- Apache2
-- Amazon CloudWatch Agent
-- AWS SSM Agent (pre-installed in Ubuntu 22.04)
-
-## Security Design
-
-- App servers in private subnets — no direct internet access
-- SSH to app servers only via Bastion (port 22 from `192.168.1.0/24`)
-- Bastion isolated in separate VPC — connected via Transit Gateway
-- ALB in public subnets — app servers only accept traffic from ALB SG
-- IAM least-privilege role on EC2: SSM + CloudWatch only
-
-## Quick Start
-
-**Prerequisites:** AWS credentials, Packer, Terraform
+## Packer Golden AMI
 
 ```bash
-# 1. Build Golden AMI
-packer init packer/
-packer build -var-file=packer/golden-ami.pkrvars.hcl packer/
+cd packer/
+packer init .
+packer build golden-ami.pkr.hcl
+```
 
-# 2. Update ami_id in terraform/modules/bastion/variables.tf
-#    and terraform/modules/launch-template/variables.tf
+Installs on Ubuntu 22.04:
+- Apache2 (web server)
+- CloudWatch Agent (metrics + logs)
+- SSM Agent (remote access, patch management)
 
-# 3. Deploy infrastructure
-cd terraform/
+## Deploy
+
+```bash
+# 1. Build the AMI first
+cd packer/
+packer build golden-ami.pkr.hcl
+# Note the AMI ID from output
+
+# 2. Deploy infrastructure
+cd ../terraform/
 terraform init
-terraform plan
 terraform apply
 ```
 
-## Cost
+## Security Design
 
-~$0.05/hour for NAT Gateway when idle. Run `terraform destroy` when not in use.
+- App EC2 instances have **no public IP** — only reachable from Bastion via Transit Gateway
+- ALB is the only public entry point for application traffic
+- EC2 IAM role is least-privilege: SSM + CloudWatch only
+- No long-lived SSH keys required — use SSM Session Manager instead
+
+## Key Concepts
+
+- **Golden AMI pattern** — bake dependencies into AMI at build time, not at boot time
+- **Transit Gateway** — scalable hub-and-spoke networking between VPCs
+- **CloudWatch Agent via SSM** — centralized config delivery without manual file editing
